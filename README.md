@@ -1,112 +1,37 @@
-#!/usr/bin/env python3
-"""
-monitor_bot.py
-Main scheduler and coordinator for checks and alerts.
-"""
-import os
-import time
-import logging
-import signal
-from datetime import datetime, timedelta
-from threading import Event
+# kiprops-forex — Forex paper trading MVP
 
-import yaml
-import requests
-from apscheduler.schedulers.background import BackgroundScheduler
+Quick paper-trading Forex backend (MVP).
+- Language: Python 3.10+
+- Framework: FastAPI
+- DB: SQLite (for MVP)
+- Market data: exchangerate.host (no API key required)
+- Mode: Paper trading (simulated fills at current market price)
+- Features:
+  - Register / login (JWT)
+  - Place market orders (buy/sell) for FX pairs (like "EUR/USD")
+  - View orders, positions, account cash and P&L
+  - Get current rate and historical timeseries
 
-from checks import run_check
-from notifier import Notifier
+Quick start (local)
+1. Clone or add files (this repo).
+2. Create and activate a Python venv:
+   - python -m venv .venv
+   - source .venv/bin/activate (mac/linux) or .venv\Scripts\activate (Windows)
+3. Install:
+   - pip install -r requirements.txt
+4. Copy .env.example -> .env and adjust if needed
+5. Run:
+   - uvicorn app.main:app --reload
+6. API docs:
+   - Open http://127.0.0.1:8000/docs
 
-# Configure logging
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-log = logging.getLogger("monitor_bot")
+Notes
+- This is paper trading only. No real broker integration.
+- Default starting cash = 10000 USD. Positions tracked as base currency amounts (e.g., holding EUR when trading EUR/USD).
+- Market prices come from exchangerate.host. For production you'd want a reliable paid FX data feed and a broker adapter.
 
-# Load config
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
-
-
-def load_config(path=CONFIG_PATH):
-    with open(path, "r") as fh:
-        return yaml.safe_load(fh)
-
-
-def main():
-    config = load_config()
-    notifier = Notifier(config.get("notifier", {}))
-
-    # Keep cooldown map to avoid repeated alerts
-    last_alert_at = {}  # check_id -> datetime
-
-    scheduler = BackgroundScheduler()
-    stop_event = Event()
-
-    def schedule_check(check):
-        check_id = check.get("id") or check["name"]
-        interval = check.get("interval_seconds", 60)
-
-        def job():
-            nonlocal last_alert_at
-            try:
-                result = run_check(check)
-            except Exception as exc:
-                log.exception("Exception running check %s: %s", check_id, exc)
-                result = {"ok": False, "reason": f"exception: {exc}"}
-
-            if not result.get("ok"):
-                cooldown = timedelta(seconds=check.get("alert_cooldown_seconds", 300))
-                now = datetime.utcnow()
-                last = last_alert_at.get(check_id)
-                if last and now - last < cooldown:
-                    log.info("Suppressed alert for %s (cooldown)", check_id)
-                    return
-
-                # Send alert
-                title = f"ALERT: {check.get('name')}"
-                body_lines = [
-                    f"Check: {check.get('name')}",
-                    f"Time: {now.isoformat()}Z",
-                    f"Reason: {result.get('reason')}",
-                    f"Details: {result.get('details','')}",
-                ]
-                body = "\n".join(body_lines)
-                try:
-                    notifier.alert(title, body)
-                    last_alert_at[check_id] = now
-                    log.info("Alert sent for %s", check_id)
-                except Exception:
-                    log.exception("Failed to send alert for %s", check_id)
-            else:
-                log.debug("Check OK: %s", check.get("name"))
-
-        scheduler.add_job(job, "interval", seconds=interval, id=str(check_id), next_run_time=datetime.utcnow())
-
-    # schedule checks
-    for c in config.get("checks", []):
-        schedule_check(c)
-        log.info("Scheduled check %s", c.get("name"))
-
-    scheduler.start()
-    log.info("Scheduler started — running checks. Press Ctrl+C to stop.")
-
-    def _shutdown(signum=None, frame=None):
-        log.info("Shutting down scheduler...")
-        stop_event.set()
-        scheduler.shutdown(wait=False)
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-
-    try:
-        # keep alive
-        while not stop_event.is_set():
-            time.sleep(1)
-    finally:
-        scheduler.shutdown()
-        log.info("Exited.")
-
-
-if __name__ == "__main__":
-    main()
+Want next?
+- I can scaffold a React/Vite frontend trade ticket & dashboard.
+- Add limit orders and a simple background matcher that monitors live prices and executes open limit orders.
+- Add an adapter for OANDA (paper/live) or other FX brokers.
+- Push this scaffold into `datryspin/backend` (create branch + files) — tell me to proceed.
